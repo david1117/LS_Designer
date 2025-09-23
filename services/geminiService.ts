@@ -1,71 +1,39 @@
-import { GoogleGenAI, Modality, type Part } from "@google/genai";
-
-let ai: GoogleGenAI | undefined;
-
-function getAiInstance(): GoogleGenAI {
-  if (!ai) {
-    // This check is safe for browser environments where `process` may not be defined.
-    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : undefined;
-    if (!apiKey) {
-      // This error will be caught by the UI and displayed to the user, preventing a crash.
-      throw new Error("API_KEY environment variable is not set. Please configure it in your deployment environment.");
-    }
-    ai = new GoogleGenAI({ apiKey: apiKey });
-  }
-  return ai;
-}
-
-const fileToPart = (base64Data: string, mimeType: string): Part => {
-    return {
-        inlineData: {
-            data: base64Data.split(',')[1],
-            mimeType,
-        },
-    };
-};
-
-const getMimeType = (base64Data: string): string => {
-    return base64Data.split(';')[0].split(':')[1];
-}
-
 export const generateBackgrounds = async (
     base64FurnitureImage: string,
     prompt: string,
     base64ReferenceImage: string | null
 ): Promise<string> => {
-    const geminiAi = getAiInstance(); // This will throw an error if API key is missing
+    const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            base64FurnitureImage,
+            prompt,
+            base64ReferenceImage,
+        }),
+    });
 
-    const furnitureMimeType = getMimeType(base64FurnitureImage);
+    const result = await response.json();
 
-    const contentParts: Part[] = [
-        fileToPart(base64FurnitureImage, furnitureMimeType),
-    ];
-
-    if (base64ReferenceImage) {
-        const referenceMimeType = getMimeType(base64ReferenceImage);
-        contentParts.push(fileToPart(base64ReferenceImage, referenceMimeType));
+    if (!response.ok) {
+        // The server provides a clear error message in the `error` field.
+        // Let's propagate that message to the UI.
+        const errorMessage = result.error || `An unknown error occurred on the server (status: ${response.status}).`;
+        
+        // This specific error message is what the UI currently shows.
+        if (errorMessage.includes('API_KEY is not configured')) {
+            throw new Error("API_KEY environment variable is not set. Please configure it in your deployment environment.");
+        }
+        
+        throw new Error(errorMessage);
     }
     
-    contentParts.push({ text: prompt });
-
-    try {
-        const response = await geminiAi.models.generateContent({
-            model: 'gemini-2.5-flash-image-preview',
-            contents: { parts: contentParts },
-            config: {
-                responseModalities: [Modality.IMAGE, Modality.TEXT],
-            },
-        });
-
-        const imagePart = response.candidates?.[0]?.content.parts.find(part => part.inlineData);
-        if (imagePart?.inlineData) {
-            const mimeType = imagePart.inlineData.mimeType;
-            const base64Data = imagePart.inlineData.data;
-            return `data:${mimeType};base64,${base64Data}`;
-        }
-        throw new Error("API 回應中未包含有效圖片。");
-    } catch (error) {
-        console.error("Error generating image with Gemini API:", error);
-        throw new Error("背景生成失敗。模型可能無法處理此請求。");
+    if (result.generatedImage) {
+        return result.generatedImage;
     }
+
+    // This case should ideally not happen if the server-side logic is correct.
+    throw new Error("API response did not contain the expected image data.");
 };

@@ -1,10 +1,19 @@
 import { GoogleGenAI, Modality, type Part } from "@google/genai";
 
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set.");
-}
+let ai: GoogleGenAI | undefined;
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+function getAiInstance(): GoogleGenAI {
+  if (!ai) {
+    // This check is safe for browser environments where `process` may not be defined.
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : undefined;
+    if (!apiKey) {
+      // This error will be caught by the UI and displayed to the user, preventing a crash.
+      throw new Error("API_KEY environment variable is not set. Please configure it in your deployment environment.");
+    }
+    ai = new GoogleGenAI({ apiKey: apiKey });
+  }
+  return ai;
+}
 
 const fileToPart = (base64Data: string, mimeType: string): Part => {
     return {
@@ -24,6 +33,8 @@ export const generateBackgrounds = async (
     prompt: string,
     base64ReferenceImage: string | null
 ): Promise<string> => {
+    const geminiAi = getAiInstance(); // This will throw an error if API key is missing
+
     const furnitureMimeType = getMimeType(base64FurnitureImage);
 
     const contentParts: Part[] = [
@@ -38,7 +49,7 @@ export const generateBackgrounds = async (
     contentParts.push({ text: prompt });
 
     try {
-        const response = await ai.models.generateContent({
+        const response = await geminiAi.models.generateContent({
             model: 'gemini-2.5-flash-image-preview',
             contents: { parts: contentParts },
             config: {
